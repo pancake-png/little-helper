@@ -286,9 +286,9 @@ def train_models(_data, available_roles, data_signature):
     training_data = _data.copy()
 
     # Keep local training manageable.
-    if len(training_data) > 30000:
+    if len(training_data) > 5000:
         training_data = training_data.sample(
-            n=30000,
+            n=5000,
             random_state=42,
         )
 
@@ -327,11 +327,11 @@ def train_models(_data, available_roles, data_signature):
                 (
                     "regressor",
                     RandomForestRegressor(
-                        n_estimators=40,
+                        n_estimators=15,
                         max_depth=12,
                         min_samples_leaf=5,
                         random_state=42,
-                        n_jobs=-1,
+                        n_jobs=2,
                     ),
                 ),
             ]
