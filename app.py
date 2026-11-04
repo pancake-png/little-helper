@@ -414,7 +414,7 @@ if "scenario_date" not in st.session_state:
     st.session_state["scenario_date"] = date.today()
 
 if "weather_city" not in st.session_state:
-    st.session_state["weather_city"] = "San Francisco, CA"
+    st.session_state["weather_city"] = "Toronto, ON"
 if "use_live_weather" not in st.session_state:
     st.session_state["use_live_weather"] = True
 
@@ -724,14 +724,8 @@ with st.sidebar:
     st.number_input("Residents present",min_value=0,max_value=5000,step=1,key="resident_count")
     st.number_input("Facility capacity",min_value=1,max_value=5000,step=1,key="facility_capacity")
     st.date_input("Scenario date",key="scenario_date")
-if "weather_city" not in st.session_state:
-    st.session_state.weather_city = "Toronto"
-st.selectbox(
-    "Weather location",
-    options=list(DEMO_CITIES),
-    key="weather_city"
-)
-st.toggle("Use live weather", key="use_live_weather")
+    st.selectbox("Weather location", options=list(DEMO_CITIES), key="weather_city")
+    st.toggle("Use live weather", key="use_live_weather")
     if not st.session_state["use_live_weather"]:
         st.selectbox("Simulated weather",options=WEATHER_OPTIONS,key="scenario_weather")
     st.select_slider("Visitor activity",options=["Quiet","Typical","Busy"],key="scenario_visitor_activity")
