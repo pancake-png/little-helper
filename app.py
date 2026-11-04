@@ -731,7 +731,7 @@ st.selectbox(
     options=list(DEMO_CITIES),
     key="weather_city"
 )
-    st.toggle("Use live weather", key="use_live_weather")
+st.toggle("Use live weather", key="use_live_weather")
     if not st.session_state["use_live_weather"]:
         st.selectbox("Simulated weather",options=WEATHER_OPTIONS,key="scenario_weather")
     st.select_slider("Visitor activity",options=["Quiet","Typical","Busy"],key="scenario_visitor_activity")
