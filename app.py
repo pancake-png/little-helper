@@ -1,6 +1,9 @@
 
 from pathlib import Path
 from datetime import date
+from urllib.parse import urlencode
+from urllib.request import urlopen
+import json
 
 import pandas as pd
 import streamlit as st
@@ -35,6 +38,46 @@ ROLE_LABELS = {
 }
 
 WEATHER_OPTIONS = ["Clear", "Rain", "Snow / ice"]
+
+# Fixed demo locations avoid exposing any user's location.
+DEMO_CITIES = {
+    "San Francisco, CA": (37.7749, -122.4194),
+    "New York, NY": (40.7128, -74.0060),
+    "Chicago, IL": (41.8781, -87.6298),
+    "Miami, FL": (25.7617, -80.1918),
+    "Toronto, ON": (43.6532, -79.3832),
+}
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_live_weather(city):
+    """Get model-based current conditions from Open-Meteo (cached 30 min)."""
+    latitude, longitude = DEMO_CITIES[city]
+    params = urlencode({
+        "latitude": latitude, "longitude": longitude,
+        "current": "temperature_2m,weather_code,precipitation,wind_speed_10m",
+        "timezone": "auto", "temperature_unit": "celsius",
+    })
+    with urlopen(f"https://api.open-meteo.com/v1/forecast?{params}", timeout=8) as response:
+        payload = json.load(response)
+    current = payload["current"]
+    code = int(current["weather_code"])
+    if code in (71, 73, 75, 77, 85, 86, 56, 57, 66, 67):
+        category, label = "Snow / ice", "Snow / ice"
+    elif code in (51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99):
+        category, label = "Rain", "Rain / storm"
+    elif code in (45, 48):
+        category, label = "Clear", "Fog"
+    elif code in (1, 2, 3):
+        category, label = "Clear", "Cloudy / partly cloudy"
+    else:
+        category, label = "Clear", "Clear"
+    return {
+        "category": category, "label": label,
+        "temperature": float(current["temperature_2m"]),
+        "precipitation": float(current["precipitation"]),
+        "wind": float(current["wind_speed_10m"]),
+        "observed_at": current.get("time", ""),
+    }
 
 # Illustrative assumptions for the visitor simulation.
 # These are not fitted to the CMS dataset.
@@ -370,6 +413,11 @@ if "facility_capacity" not in st.session_state:
 if "scenario_date" not in st.session_state:
     st.session_state["scenario_date"] = date.today()
 
+if "weather_city" not in st.session_state:
+    st.session_state["weather_city"] = "San Francisco, CA"
+if "use_live_weather" not in st.session_state:
+    st.session_state["use_live_weather"] = True
+
 if "scenario_weather" not in st.session_state:
     st.session_state["scenario_weather"] = "Rain"
 
@@ -676,16 +724,28 @@ with st.sidebar:
     st.number_input("Residents present",min_value=0,max_value=5000,step=1,key="resident_count")
     st.number_input("Facility capacity",min_value=1,max_value=5000,step=1,key="facility_capacity")
     st.date_input("Scenario date",key="scenario_date")
-    st.selectbox("Weather",options=WEATHER_OPTIONS,key="scenario_weather")
+    st.selectbox("Weather location", options=list(DEMO_CITIES), key="weather_city")
+    st.toggle("Use live weather", key="use_live_weather")
+    if not st.session_state["use_live_weather"]:
+        st.selectbox("Simulated weather",options=WEATHER_OPTIONS,key="scenario_weather")
     st.select_slider("Visitor activity",options=["Quiet","Typical","Busy"],key="scenario_visitor_activity")
     st.select_slider("Appointment activity",options=["Low","Typical","High"],key="scenario_appointments")
-    st.caption("Demo only. Weather, population, visitors and appointments are simulated.")
+    st.caption("Weather is live when enabled; population, visitors and appointments are simulated.")
 
 # Recompute after widgets to reflect the currently selected scenario.
 predictions=get_predictions()
 resident_count=st.session_state["resident_count"]
 facility_capacity=st.session_state["facility_capacity"]
 weather=st.session_state["scenario_weather"]
+weather_info=None
+weather_error=False
+if st.session_state["use_live_weather"]:
+    try:
+        weather_info=fetch_live_weather(st.session_state["weather_city"])
+        weather=weather_info["category"]
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        weather_error=True
+        st.sidebar.warning("Weather service unavailable; using simulated conditions.")
 visitor_activity=st.session_state["scenario_visitor_activity"]
 appointment_activity=st.session_state["scenario_appointments"]
 occupancy_percent=100*resident_count/facility_capacity
@@ -704,8 +764,12 @@ with tab_dashboard:
     a.metric("Occupancy",f"{occupancy_percent:.0f}%")
     b.metric("Remaining spaces",f"{remaining_capacity:,}")
     c.metric("Illustrative visitors",f"~{estimated_visitors}")
-    weather_temperature={"Clear":"21°C","Rain":"14°C","Snow / ice":"−2°C"}[weather]
-    d.metric("Weather (simulated)",f"{weather_temperature} {weather}")
+    if weather_info:
+        d.metric("Weather (Open-Meteo)", f"{weather_info['temperature']:.0f}°C", weather_info["label"], delta_color="off")
+        st.caption(f"Weather: {st.session_state['weather_city']} · Open-Meteo model-based current conditions as of {weather_info['observed_at']} local time · wind {weather_info['wind']:.0f} km/h · precipitation {weather_info['precipitation']:.1f} mm. [Source: Open-Meteo](https://open-meteo.com/)")
+    else:
+        weather_temperature={"Clear":"21°C","Rain":"14°C","Snow / ice":"−2°C"}[weather]
+        d.metric("Weather (simulated)",f"{weather_temperature} {weather}")
 
     with st.container(border=True):
         st.markdown("### Staffing: planned vs forecast")
@@ -736,11 +800,11 @@ with tab_dashboard:
         donut=go.Figure(go.Pie(labels=["Occupied","Available"],values=[occupied,max(0,facility_capacity-occupied)],hole=.72,marker_colors=["#13538e","#d8eaf1"],sort=False))
         donut.update_layout(height=270,margin=dict(l=0,r=0,t=10,b=10),paper_bgcolor="rgba(0,0,0,0)",showlegend=True)
         st.plotly_chart(donut,use_container_width=True,config={"displayModeBar":False})
-        st.caption("Visitor counts are illustrative and vary with simulated weather and activity settings.")
+        st.caption("Visitor counts are illustrative. When live weather is enabled, its condition category is used in a hypothetical visitor adjustment; no weather-to-visitors relationship has been validated.")
     with st.expander("Data and methodology"):
         st.write(f"Demo sample: {len(data):,} public U.S. nursing-home daily records, {data['STATE'].nunique()} state/territory codes.")
         st.write(f"Historical dates: {data['WorkDate'].min():%Y-%m-%d} to {data['WorkDate'].max():%Y-%m-%d}.")
-        st.write("Random forest models estimate daily hours by staffing role using state, census, weekday and month. The source data is historical and does not provide live staffing or resident acuity.")
+        st.write("Random forest models estimate daily hours by staffing role using state, census, weekday and month. The source data is historical and does not provide live staffing or resident acuity. Live weather does not change staffing model predictions; it only changes the illustrative visitor scenario.")
 
 with tab_irene:
     st.markdown('<div class="irene-title">IRENE</div><div class="irene-sub">Your friendly helper for the day.</div>',unsafe_allow_html=True)
